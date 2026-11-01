@@ -41,8 +41,6 @@ DEFAULT_VR_ENDPOINT = "tcp://localhost:5567"
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 from hei_robot_mujoco_scene import (  # noqa: E402
-    GRASPABLE_OBJECTS,
-    SCENE_GEOMS,
     TABLE_CENTER_X_M,
     TABLE_CENTER_Y_M,
     TABLE_HALF_LENGTH_X_M,
@@ -50,6 +48,8 @@ from hei_robot_mujoco_scene import (  # noqa: E402
     TABLE_TOP_Z_M,
     GraspableObjectSpec,
     build_mujoco_model,
+    scene_geom_names,
+    scene_objects,
 )
 from src import pinocchio_kinematic  # noqa: E402
 from src import utils  # noqa: E402
@@ -214,7 +214,14 @@ class HEIRobotVRSimulator:
 
         print(f"[HEI VR Sim] loading MuJoCo model: {self.model_path}", flush=True)
         self.scene_enabled = not bool(getattr(args, "plain_scene", False))
-        self.model = build_mujoco_model(self.model_path, add_environment=self.scene_enabled)
+        self.scene_settings = getattr(args, "scene_settings", None)
+        if self.scene_settings is None:
+            # Preserve the builder interface used by the separate physics simulator.
+            self.model = build_mujoco_model(self.model_path, add_environment=self.scene_enabled)
+        else:
+            self.model = build_mujoco_model(
+                self.model_path, add_environment=self.scene_enabled, scene_settings=self.scene_settings
+            )
         self.data = mujoco.MjData(self.model)
         self.data_lock = threading.Lock()
         self.vr_lock = threading.Lock()
@@ -280,7 +287,7 @@ class HEIRobotVRSimulator:
     def _initialize_graspable_objects(self) -> None:
         if not self.scene_enabled:
             return
-        for object_spec in GRASPABLE_OBJECTS:
+        for object_spec in scene_objects(self.scene_settings):
             body_id = self._mujoco_body_id(object_spec.body_name)
             self.graspable_objects[object_spec.body_name] = GraspableObjectRuntime(
                 spec=object_spec,
@@ -321,7 +328,11 @@ class HEIRobotVRSimulator:
             self._set_gripper("right", GRIPPER_CLOSED_M)
             self._set_gripper("left", GRIPPER_CLOSED_M)
             self._reset_scene_objects()
-            self.data.qpos[self.mj_qpos[LIFT_JOINT]] = 0.0
+            initial_lift = float(getattr(self.args, "initial_height_mm", 0.0)) / 1000.0
+            low, high = self.model.jnt_range[self._mujoco_joint_id(LIFT_JOINT)]
+            if not np.isfinite(initial_lift) or not low <= initial_lift <= high:
+                raise ValueError(f"Initial lift {initial_lift:g} m is outside the model range [{low:g}, {high:g}]")
+            self.data.qpos[self.mj_qpos[LIFT_JOINT]] = initial_lift
             mujoco.mj_forward(self.model, self.data)
 
     def _reset_scene_objects(self) -> None:
@@ -383,7 +394,7 @@ class HEIRobotVRSimulator:
         for joint in WHEEL_JOINTS:
             self._mujoco_joint_id(joint)
         if self.scene_enabled:
-            for geom in SCENE_GEOMS:
+            for geom in scene_geom_names(self.scene_settings):
                 if mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom) < 0:
                     raise ValueError(f"MuJoCo debug scene is missing geom: {geom}")
         mujoco.mj_forward(self.model, self.data)

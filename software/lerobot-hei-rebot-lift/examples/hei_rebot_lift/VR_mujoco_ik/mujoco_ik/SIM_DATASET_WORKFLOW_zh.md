@@ -207,6 +207,53 @@ cd software/lerobot-hei-rebot-lift/examples/hei_rebot_lift/VR_mujoco_ik
 程序会提示检查动作范围和任务/机械臂是否匹配。推理超时或退出时，仿真服务端会
 保持机械臂和升降位置，并把底盘速度置零。
 
+### 6.1 调整初始升降和黄色方块实验场景
+
+策略服务器新增的参数如下；不传参数时仍使用原来的 RGB 方块与香蕉场景，升降从
+`0 mm` 开始。启动时、rollout 请求重置时和窗口按 `R` 时，都会恢复配置的初始高度。
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `--initial-height-mm` | `0` | 初始升降位置，范围 `-700..0 mm`，上限位为零 |
+| `--scene` | `debug` | `debug` 或 `yellow-block-floor` |
+| `--yellow-block-xy X Y` | `0.35 -0.28` | 黄色方块中心的世界坐标，米；X 向前、Y 向左 |
+| `--yellow-block-size-m` | `0.08` | 黄色立方体边长，米；中心高度自动设为边长的一半 |
+
+`yellow-block-floor` 保留桌子，将可抓物体替换为地面上的一个黄色方块。GUI、三路
+观测相机和辅助抓取使用相同配置。这是可调试的实验场景，并非厂商训练场景复刻；
+它仍使用规则辅助抓取，没有增加物理抓取或任务成功判定。`--plain-scene` 不能与
+`--scene yellow-block-floor` 同时使用。
+
+针对附带的 `060000` 权重，先做只改变初始高度的对照：
+
+```bash
+./run_hei_robot_policy_sim.sh --publish-fps 10 --initial-height-mm -500.25 --verbose
+```
+
+观察后停止仿真和 rollout，再启动黄色方块实验：
+
+```bash
+./run_hei_robot_policy_sim.sh \
+  --publish-fps 10 \
+  --initial-height-mm -500.25 \
+  --scene yellow-block-floor \
+  --yellow-block-xy 0.35 -0.28 \
+  --yellow-block-size-m 0.08 \
+  --verbose
+```
+
+服务器使用 Xvfb/VNC 时，可保留已有命令前的 `DISPLAY=:99 MUJOCO_GL=glfw
+PYOPENGL_PLATFORM=glx LIBGL_ALWAYS_SOFTWARE=1 env -u LD_LIBRARY_PATH`。其中
+`LIBGL_ALWAYS_SOFTWARE=1` 强制软件渲染；它不等于 PyTorch 使用 CPU。
+
+VLA 终端的权重路径、虚拟环境、离线缓存及启动入口保持原来的配置即可。
+`--task` 只提供语言条件，不选择场景。第一次对照保持 `--fps 10`，可把测试时长
+改为 `--duration-sec 120`；增加时长不代表会完成任务。这份权重每块执行 50 步，
+在实际 10 Hz 下约需 5 秒，且还要加上生成耗时。对齐训练节奏时再同时尝试仿真
+`--publish-fps 30` 和 rollout `--fps 30`，检查实际发布速度及丢帧日志；rollout 的
+`--fps` 本身不限制动作频率。请停止并重启 rollout 来重复实验，不要在旧动作队列
+尚未执行完时仅按窗口 `R`。
+
 ## 7. 数据兼容边界
 
 仿真与真机使用相同的 18 维字段、单位、顺序和三相机名称，因此策略结构可以复用。但稳定抓取仍是确定性吸附逻辑，视觉、摩擦、负载与真实成像存在差异。建议先用仿真验证任务链路，再用真实示教数据微调。

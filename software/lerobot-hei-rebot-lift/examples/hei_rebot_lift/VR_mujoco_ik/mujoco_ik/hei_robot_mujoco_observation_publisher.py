@@ -119,6 +119,7 @@ class AsyncObservationPublisher:
                 add_environment=self.simulator.scene_enabled,
                 width=self.width,
                 height=self.height,
+                scene_settings=getattr(self.simulator, "scene_settings", None),
             )
             context = zmq.Context()
             socket = context.socket(zmq.PUB)

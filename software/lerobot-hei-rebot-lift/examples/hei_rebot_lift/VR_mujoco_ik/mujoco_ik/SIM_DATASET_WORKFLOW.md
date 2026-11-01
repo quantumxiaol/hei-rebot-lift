@@ -172,6 +172,45 @@ visible motion. If it never requests motion for three seconds, rollout prints a
 dataset/task mismatch warning. If inference stops or times out, the server holds
 arm/lift positions and zeros chassis velocity.
 
+### 6.1 Initial lift position and an experimental yellow-block scene
+
+The server accepts `--initial-height-mm` (default `0`, range `-700..0`), which
+applies at startup and on every reset, including rollout's reset request.
+The default `--scene debug` retains the RGB cubes and banana. Use
+`--scene yellow-block-floor` for one yellow cube on the floor and the existing
+table. This is an experimental layout, not a reconstruction of the checkpoint's
+training scene; it retains rule-based grasping and does not add success detection.
+
+First compare only the initial lift position using the supplied `060000` stats:
+
+```bash
+./run_hei_robot_policy_sim.sh --publish-fps 10 --initial-height-mm -500.25 --verbose
+```
+
+Then stop both processes and try the yellow-block layout:
+
+```bash
+./run_hei_robot_policy_sim.sh \
+  --publish-fps 10 --initial-height-mm -500.25 \
+  --scene yellow-block-floor \
+  --yellow-block-xy 0.35 -0.28 --yellow-block-size-m 0.08 --verbose
+```
+
+Block coordinates are world metres (+X forward, +Y left); the size is the cube's
+edge length and its centre starts half that distance above the floor. The GUI,
+observation cameras and grasp metadata share the layout. `--plain-scene` cannot
+be combined with the yellow-block scene.
+
+Keep an existing Xvfb/VNC environment prefix and the VLA terminal's checkpoint,
+virtual environment and offline cache settings. `LIBGL_ALWAYS_SOFTWARE=1` forces
+software rendering, independently of PyTorch's CUDA device. Keep `--fps 10` for
+the initial comparison; `--duration-sec 120` allows a longer observation period
+without implying task success. A 50-action chunk takes about five seconds at an
+actual 10 Hz, plus generation time. Later, try `--publish-fps 30` on the server
+and `--fps 30` on rollout together, checking actual throughput and dropped frames.
+Rollout's `--fps` is an expected rate, not a pacing mechanism. Restart rollout
+between experiments: pressing `R` alone does not clear its queued actions.
+
 ## 7. Compatibility Boundary
 
 Simulation and hardware use the same 18-D field names, units, order, and three camera names. The stable grasp is still deterministic and does not reproduce real contact, friction, load, or imaging. Validate the task in simulation, then fine-tune with real demonstrations for sim-to-real use.

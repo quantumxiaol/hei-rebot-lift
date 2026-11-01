@@ -19,6 +19,7 @@ from hei_robot_mujoco_dataset_adapter import (
     HEIMujocoDatasetAdapter,
 )
 from hei_robot_mujoco_observation_publisher import AsyncObservationPublisher
+from hei_robot_mujoco_scene import SceneSettings, scene_objects
 from hei_robot_mujoco_zmq_protocol import (
     DEFAULT_COMMAND_PORT,
     DEFAULT_OBSERVATION_PORT,
@@ -56,12 +57,50 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--plain-scene", action="store_true")
+    parser.add_argument(
+        "--scene",
+        choices=("debug", "yellow-block-floor"),
+        default="debug",
+        help="Debug RGB objects or an experimental yellow block on the floor with a target table.",
+    )
+    parser.add_argument(
+        "--initial-height-mm",
+        type=float,
+        default=0.0,
+        help="Lift position at startup and every reset, in mm relative to the upper stop (-700..0).",
+    )
+    parser.add_argument(
+        "--yellow-block-xy",
+        type=float,
+        nargs=2,
+        default=(0.35, -0.28),
+        metavar=("X", "Y"),
+        help="Yellow block centre on the floor in world metres: +X forward, +Y left.",
+    )
+    parser.add_argument(
+        "--yellow-block-size-m", type=float, default=0.08, help="Yellow cube edge length in metres."
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
     if args.publish_fps <= 0.0:
         parser.error("--publish-fps must be positive")
     if args.policy_timeout_s <= 0.0:
         parser.error("--policy-timeout-s must be positive")
+    if (
+        not np.isfinite(args.initial_height_mm)
+        or not HEIGHT_MIN_MM <= args.initial_height_mm <= HEIGHT_MAX_MM
+    ):
+        parser.error(f"--initial-height-mm must be between {HEIGHT_MIN_MM:g} and {HEIGHT_MAX_MM:g}")
+    if args.plain_scene and args.scene != "debug":
+        parser.error("--plain-scene cannot be combined with --scene yellow-block-floor")
+    try:
+        args.scene_settings = SceneSettings(
+            name=args.scene,
+            yellow_block_xy=tuple(args.yellow_block_xy),
+            yellow_block_size_m=args.yellow_block_size_m,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     return args
 
 
@@ -105,6 +144,18 @@ class HEIMujocoZmqServer(HEIRobotVRSimulator):
         self.last_command_s = 0.0
         self.last_policy_action = safe_hold_action(self.adapter.read_state())
         self.last_network_status_s = 0.0
+        print(
+            f"[HEI Sim Server] scene={args.scene if self.scene_enabled else 'plain'}, "
+            f"initial_height={self.adapter.read_state()['height.pos']:.2f} mm, grippers=closed",
+            flush=True,
+        )
+        if args.scene == "yellow-block-floor":
+            block_position = scene_objects(args.scene_settings)[0].initial_pos
+            print(
+                f"[HEI Sim Server] experimental yellow block at {block_position} m; "
+                "this layout is not a reconstruction of the checkpoint training scene",
+                flush=True,
+            )
 
     def _vr_listener(self) -> None:
         if self.control_source == "vr":
@@ -134,7 +185,10 @@ class HEIMujocoZmqServer(HEIRobotVRSimulator):
                 arm.reset_requested = False
         self.last_policy_action = safe_hold_action(self.adapter.read_state())
         self.last_command_s = 0.0
-        print("[HEI Sim Server] simulation reset", flush=True)
+        print(
+            f"[HEI Sim Server] simulation reset, height={self.last_policy_action['height.pos']:.2f} mm",
+            flush=True,
+        )
 
     def _process_commands(self) -> None:
         while True:

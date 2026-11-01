@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from hei_robot_mujoco_scene import build_mujoco_model
+from hei_robot_mujoco_scene import SceneSettings, build_mujoco_model
 
 from hei_robot_mujoco_zmq_protocol import (
     CAMERA_HEIGHT,
@@ -68,10 +68,13 @@ class HEIMujocoSnapshotRenderer:
         add_environment: bool,
         width: int,
         height: int,
+        scene_settings: SceneSettings | None = None,
     ) -> None:
         self.width = int(width)
         self.height = int(height)
-        self.model = build_mujoco_model(model_path, add_environment=add_environment)
+        self.model = build_mujoco_model(
+            model_path, add_environment=add_environment, scene_settings=scene_settings
+        )
         self.model.vis.global_.offwidth = max(self.model.vis.global_.offwidth, self.width)
         self.model.vis.global_.offheight = max(self.model.vis.global_.offheight, self.height)
         self.data = mujoco.MjData(self.model)

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -90,7 +91,41 @@ GRASPABLE_OBJECTS = (
     ),
 )
 
-SCENE_GEOMS = (
+
+@dataclass(frozen=True)
+class SceneSettings:
+    """Optional experimental layout; not a reconstruction of a training dataset."""
+
+    name: str = "debug"
+    yellow_block_xy: tuple[float, float] = (0.35, -0.28)
+    yellow_block_size_m: float = 0.08
+
+    def __post_init__(self) -> None:
+        if self.name not in ("debug", "yellow-block-floor"):
+            raise ValueError(f"Unknown scene: {self.name}")
+        if len(self.yellow_block_xy) != 2 or not all(math.isfinite(v) for v in self.yellow_block_xy):
+            raise ValueError("Yellow block X/Y must be two finite coordinates in metres")
+        if not math.isfinite(self.yellow_block_size_m) or self.yellow_block_size_m <= 0.0:
+            raise ValueError("Yellow block size must be finite and positive")
+
+
+def scene_objects(settings: SceneSettings | None = None) -> tuple[GraspableObjectSpec, ...]:
+    if settings is None or settings.name == "debug":
+        return GRASPABLE_OBJECTS
+    half_size = settings.yellow_block_size_m / 2.0
+    return (
+        GraspableObjectSpec(
+            body_name="hei_object_cube_yellow",
+            geom_name="hei_object_cube_yellow_geom",
+            initial_pos=(*settings.yellow_block_xy, half_size),
+            initial_quat=(1.0, 0.0, 0.0, 0.0),
+            support_height_m=half_size,
+            grasp_radius_m=half_size + 0.07,
+        ),
+    )
+
+
+ENVIRONMENT_GEOMS = (
     "hei_ground",
     "hei_safety_front",
     "hei_safety_rear",
@@ -108,8 +143,15 @@ SCENE_GEOMS = (
     "hei_table_leg_front_right",
     "hei_table_leg_rear_left",
     "hei_table_leg_rear_right",
-    *(obj.geom_name for obj in GRASPABLE_OBJECTS),
 )
+
+
+def scene_geom_names(settings: SceneSettings | None = None) -> tuple[str, ...]:
+    return (*ENVIRONMENT_GEOMS, *(obj.geom_name for obj in scene_objects(settings)))
+
+
+# Keep the original debug layout available to the separate contact-physics scene.
+SCENE_GEOMS = scene_geom_names()
 
 
 def _add_robot_cameras(spec: mujoco.MjSpec) -> None:
@@ -309,7 +351,24 @@ def _add_table(spec: mujoco.MjSpec) -> None:
         )
 
 
-def _add_graspable_objects(spec: mujoco.MjSpec) -> None:
+def _add_graspable_objects(spec: mujoco.MjSpec, settings: SceneSettings | None = None) -> None:
+    if settings is not None and settings.name == "yellow-block-floor":
+        block = scene_objects(settings)[0]
+        body = spec.worldbody.add_body(
+            name=block.body_name,
+            pos=list(block.initial_pos),
+            quat=list(block.initial_quat),
+        )
+        body.add_geom(
+            name=block.geom_name,
+            type=mujoco.mjtGeom.mjGEOM_BOX,
+            size=[block.support_height_m] * 3,
+            rgba=[0.95, 0.78, 0.08, 1.0],
+            contype=0,
+            conaffinity=0,
+        )
+        return
+
     cube_colors = (
         [0.82, 0.16, 0.12, 1.0],
         [0.16, 0.66, 0.25, 1.0],
@@ -378,7 +437,12 @@ def _add_graspable_objects(spec: mujoco.MjSpec) -> None:
     )
 
 
-def build_mujoco_model(urdf_path: str | Path, *, add_environment: bool = True) -> mujoco.MjModel:
+def build_mujoco_model(
+    urdf_path: str | Path,
+    *,
+    add_environment: bool = True,
+    scene_settings: SceneSettings | None = None,
+) -> mujoco.MjModel:
     """Compile the robot URDF, optionally adding the non-physical debug scene."""
     urdf_path = Path(urdf_path).expanduser().resolve()
     spec = mujoco.MjSpec.from_file(str(urdf_path))
@@ -389,5 +453,5 @@ def build_mujoco_model(urdf_path: str | Path, *, add_environment: bool = True) -
         _add_floor_markings(spec)
         _add_world_axes(spec)
         _add_table(spec)
-        _add_graspable_objects(spec)
+        _add_graspable_objects(spec, scene_settings)
     return spec.compile()
