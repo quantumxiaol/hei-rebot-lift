@@ -32,3 +32,9 @@ env/
 Thumbs.db
 
 modelsweights/
+
+# Local API credentials and uv cache
+.env
+.env.*
+!.env.example
+.uv-cache/

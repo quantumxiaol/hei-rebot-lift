@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 
-import cv2
 import numpy as np
 
 
@@ -75,8 +74,11 @@ def encode_observation_packet(
     observation: Mapping[str, object],
     action: Mapping[str, object],
     jpeg_quality: int = 85,
+    simulation: Mapping[str, object] | None = None,
 ) -> list[bytes]:
     """Encode one synchronized state/action/three-camera sample."""
+    import cv2
+
     if source_mode not in {"vr", "keyboard", "policy"}:
         raise ValueError(f"Unsupported source_mode: {source_mode}")
     quality = int(np.clip(jpeg_quality, 20, 100))
@@ -96,6 +98,8 @@ def encode_observation_packet(
             for name in CAMERA_NAMES
         },
     }
+    if simulation is not None:
+        metadata["simulation"] = dict(simulation)
     frames = [topic.encode("utf-8"), json.dumps(metadata, separators=(",", ":")).encode("utf-8")]
     for name in CAMERA_NAMES:
         rgb = np.asarray(observation[name])
@@ -118,6 +122,8 @@ def decode_observation_packet(
     expected_topic: str = OBSERVATION_TOPIC,
 ) -> tuple[dict, dict[str, float | np.ndarray], dict[str, float]]:
     """Decode and validate one observation packet."""
+    import cv2
+
     expected_count = 2 + len(CAMERA_NAMES)
     if len(parts) != expected_count:
         raise ValueError(f"Expected {expected_count} multipart frames, received {len(parts)}")

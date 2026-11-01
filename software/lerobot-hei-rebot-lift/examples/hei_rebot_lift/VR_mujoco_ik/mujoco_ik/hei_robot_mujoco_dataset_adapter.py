@@ -28,6 +28,7 @@ from hei_robot_vr_mujoco_sim import (
     GRIPPER_OPEN_M,
     LIFT_JOINT,
     MAX_MUJOCO_JOINT_STEP_RAD,
+    TCP_FRAMES,
 )
 
 
@@ -56,6 +57,7 @@ class SimulationSnapshot:
     qpos: np.ndarray
     body_pos: np.ndarray
     body_quat: np.ndarray
+    simulation: dict | None = None
 
 
 class HEIMujocoSnapshotRenderer:
@@ -225,7 +227,32 @@ class HEIMujocoDatasetAdapter:
                 qpos=self.simulator.data.qpos.copy(),
                 body_pos=self.simulator.model.body_pos.copy(),
                 body_quat=self.simulator.model.body_quat.copy(),
+                simulation=self._simulation_state_unlocked(),
             )
+
+    def _simulation_state_unlocked(self) -> dict:
+        """Explicit simulator ground truth for tool agents; not real-robot sensing."""
+        sim = self.simulator
+        return {
+            "kind": "hei_mujoco_kinematic",
+            "session_id": sim.simulation_id,
+            "reset_count": sim.reset_count,
+            "scene": getattr(sim.scene_settings, "name", "debug"),
+            "base_pose": sim.base_pose.tolist(),
+            "tcp": {
+                side: sim.data.xpos[sim._mujoco_body_id(frame)].tolist()
+                for side, frame in TCP_FRAMES.items()
+            },
+            "objects": {
+                name.removeprefix("hei_object_"): {
+                    "position": sim.data.xpos[runtime.body_id].tolist(),
+                    "initial_position": runtime.initial_pos.tolist(),
+                    "held_by": runtime.held_by,
+                    "grasp_radius_m": runtime.spec.grasp_radius_m,
+                }
+                for name, runtime in sim.graspable_objects.items()
+            },
+        }
 
     def read_observation(self) -> dict[str, float | np.ndarray]:
         if self.renderer is None:

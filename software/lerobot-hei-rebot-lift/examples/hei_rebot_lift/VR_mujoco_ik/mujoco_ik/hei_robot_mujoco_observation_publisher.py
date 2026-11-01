@@ -154,6 +154,7 @@ class AsyncObservationPublisher:
                     observation=observation,
                     action=sample.action,
                     jpeg_quality=self.jpeg_quality,
+                    simulation=sample.snapshot.simulation,
                 )
                 try:
                     socket.send_multipart(packet, flags=zmq.NOBLOCK, copy=False)

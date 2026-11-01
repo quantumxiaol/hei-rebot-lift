@@ -105,7 +105,12 @@ def parse_args() -> argparse.Namespace:
 
 
 class HEIMujocoZmqServer(HEIRobotVRSimulator):
-    """Own MuJoCo in hei-rebot-vr; never imports LeRobot."""
+    """Own MuJoCo in a standalone environment; never imports LeRobot."""
+
+    def _build_arm_solvers(self) -> dict:
+        if self.control_source == "policy":
+            return {}
+        return super()._build_arm_solvers()
 
     def __init__(self, args: argparse.Namespace) -> None:
         self.server_args = args
@@ -241,7 +246,7 @@ class HEIMujocoZmqServer(HEIRobotVRSimulator):
         if self.control_source == "vr":
             print("[HEI Sim Server] VR controls simulation; start record_mujoco.py in lerobot5", flush=True)
         else:
-            print("[HEI Sim Server] waiting for rollout_mujoco.py actions from lerobot5", flush=True)
+            print("[HEI Sim Server] waiting for a policy client or local sim agent", flush=True)
 
         self.viewer = mujoco.viewer.launch_passive(
             self.model,

@@ -13,8 +13,10 @@ import os
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 # 在创建 IK solver 前设置连续性约束，抑制快速运动时的跳解。
 os.environ.setdefault("IK_SMOOTH_WEIGHT_FIRST_TWO", "2.0")
@@ -28,8 +30,11 @@ os.environ.setdefault("SAM101_IPOPT_ACCEPTABLE_TOL", "1e-3")
 import mujoco
 import mujoco.viewer
 import numpy as np
-import pinocchio as pin
 import zmq
+
+if TYPE_CHECKING:
+    import pinocchio as pin
+    from src import pinocchio_kinematic
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -51,7 +56,6 @@ from hei_robot_mujoco_scene import (  # noqa: E402
     scene_geom_names,
     scene_objects,
 )
-from src import pinocchio_kinematic  # noqa: E402
 from src import utils  # noqa: E402
 
 
@@ -251,6 +255,8 @@ class HEIRobotVRSimulator:
         self.previous_gripper_closed = {"right": True, "left": True}
         self._initialize_graspable_objects()
         self.last_status_s = 0.0
+        self.simulation_id = str(uuid.uuid4())
+        self.reset_count = -1
 
         self._reset_full_pose()
         self.arms = self._build_arm_solvers()
@@ -317,6 +323,7 @@ class HEIRobotVRSimulator:
 
     def _reset_full_pose(self) -> None:
         with self.data_lock:
+            self.reset_count += 1
             self.data.qpos[:] = 0.0
             self.data.qvel[:] = 0.0
             self.base_pose[:] = 0.0
@@ -357,6 +364,11 @@ class HEIRobotVRSimulator:
         return np.asarray(indices, dtype=int)
 
     def _build_arm_solvers(self) -> dict[str, ArmRuntime]:
+        # Policy mode overrides this method: receiving joint targets needs no
+        # Pinocchio/CasADi. Keep these optional VR dependencies out of its imports.
+        import pinocchio as pin
+        from src import pinocchio_kinematic
+
         # Pinocchio 中 continuous 轮子各占两个 q，因此不能复用 MuJoCo qpos 下标。
         full_pin_model = pin.buildModelFromUrdf(str(self.model_path))
         reference_q = pin.neutral(full_pin_model)
@@ -562,6 +574,8 @@ class HEIRobotVRSimulator:
 
     def _filter_arm_target(self, arm: ArmRuntime, target: np.ndarray, dt: float) -> np.ndarray:
         """对 TCP 位姿做自适应低通，不改变 VR 到机器人的 1:1 比例。"""
+        import pinocchio as pin
+
         previous = arm.filtered_target_tf
         if previous is None:
             arm.filtered_target_tf = target.copy()
@@ -665,6 +679,8 @@ class HEIRobotVRSimulator:
     @staticmethod
     def _interpolate_target(start_tf: np.ndarray, end_tf: np.ndarray, alpha: float) -> np.ndarray:
         """在 SE(3) 中插值 TCP 目标：位置线性插值，姿态沿最短旋转路径插值。"""
+        import pinocchio as pin
+
         alpha = float(np.clip(alpha, 0.0, 1.0))
         interpolated = np.eye(4)
         interpolated[:3, 3] = (

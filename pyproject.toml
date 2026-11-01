@@ -1,0 +1,24 @@
+[project]
+name = "hei-sim-agent"
+version = "0.1.0"
+description = "CPU-only HEI MuJoCo simulation and DeepSeek tool-calling agent"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "mujoco==3.5.0",
+    "numpy>=2.0,<3",
+    "opencv-python-headless>=4.10,<5",
+    "pyzmq>=26,<28",
+    "python-dotenv>=1.0,<2",
+    "httpx>=0.28,<1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "ruff>=0.12"]
+
+[tool.uv]
+package = false
+default-groups = []
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
