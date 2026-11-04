@@ -11,6 +11,9 @@ import numpy as np
 from .client import Frame, SimulationClient
 from .kinematics import Kinematics
 
+# isort: split
+from hei_robot_mujoco_scene import GRASP_CENTER_TOLERANCE_M
+
 
 @dataclass(frozen=True)
 class PickupGoal:
@@ -37,6 +40,18 @@ class Controller:
             self.client.hold()
             raise RuntimeError("Simulator was reset or restarted. Start a new agent run.")
         return frame
+
+    def _grasp_distance(self, frame: Frame, side: str) -> float:
+        if self.goal is None:
+            raise ValueError("Select a target before checking grasp distance")
+        obj = frame.scene["objects"][self.goal.object_name]
+        return float(np.linalg.norm(np.asarray(obj["position"]) - frame.scene["tcp"][side]))
+
+    def _grasp_tolerance(self, frame: Frame) -> float:
+        if self.goal is None:
+            raise ValueError("Select a target before checking grasp distance")
+        obj = frame.scene["objects"][self.goal.object_name]
+        return min(GRASP_CENTER_TOLERANCE_M, float(obj.get("grasp_radius_m", GRASP_CENTER_TOLERANCE_M)))
 
     def wait_for(self, predicate: Callable[[Frame], bool], timeout: float = 8.0) -> Frame:
         deadline = time.monotonic() + timeout
@@ -116,6 +131,15 @@ class Controller:
             opening = arguments.get("opening")
             if opening not in ("open", "closed"):
                 raise ValueError("opening must be open or closed")
+            if opening == "closed":
+                distance = self._grasp_distance(frame, side)
+                tolerance = self._grasp_tolerance(frame)
+                if not distance <= tolerance:
+                    raise ValueError(
+                        f"Cannot grasp: TCP is {distance:.3f} m from the selected object's centre "
+                        f"(maximum {tolerance:.3f} m). Keep the gripper open and use "
+                        "move_to_object with clearance_m=0 before closing."
+                    )
             action = dict(frame.state)
             key = f"{side}_gripper.pos"
             action[key] = -4.5 if opening == "open" else 0.0
@@ -150,10 +174,12 @@ class Controller:
     def success(self) -> bool:
         if self.goal is None:
             return False
-        obj = self.frame().scene["objects"].get(self.goal.object_name)
+        frame = self.frame()
+        obj = frame.scene["objects"].get(self.goal.object_name)
         return bool(
             obj
             and obj["held_by"] in ("left", "right")
+            and self._grasp_distance(frame, obj["held_by"]) <= self._grasp_tolerance(frame)
             and obj["position"][2] - obj["initial_position"][2] >= self.goal.minimum_lift_m
         )
 

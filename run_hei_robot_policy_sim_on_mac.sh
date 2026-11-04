@@ -12,4 +12,4 @@ cd "$ROOT"
 exec env -u DISPLAY -u PYOPENGL_PLATFORM -u LIBGL_ALWAYS_SOFTWARE -u LD_LIBRARY_PATH \
   MUJOCO_GL=cgl uv run --locked --project "$ROOT" python -m sim_agent.mac_viewer -u \
   "$ROOT/software/lerobot-hei-rebot-lift/examples/hei_rebot_lift/VR_mujoco_ik/mujoco_ik/hei_robot_mujoco_zmq_server.py" \
-  --control-source policy --bind-ip 127.0.0.1 --publish-fps 10 "$@"
+  --control-source policy --bind-ip 127.0.0.1 --publish-fps 10 --camera-preview "$@"

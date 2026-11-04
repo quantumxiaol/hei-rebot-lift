@@ -7,10 +7,10 @@ import queue
 import threading
 from dataclasses import dataclass
 
+import numpy as np
 import zmq
-
 from hei_robot_mujoco_dataset_adapter import HEIMujocoSnapshotRenderer, SimulationSnapshot
-from hei_robot_mujoco_zmq_protocol import encode_observation_packet
+from hei_robot_mujoco_zmq_protocol import CAMERA_NAMES, encode_observation_packet
 
 
 @dataclass(frozen=True)
@@ -18,6 +18,13 @@ class ObservationSample:
     snapshot: SimulationSnapshot
     action: dict[str, float]
     timestamp_s: float
+
+
+@dataclass(frozen=True)
+class CameraPreviewFrame:
+    sequence: int
+    timestamp_s: float
+    images: tuple[np.ndarray, ...]
 
 
 class AsyncObservationPublisher:
@@ -34,6 +41,7 @@ class AsyncObservationPublisher:
         jpeg_quality: int,
         width: int,
         height: int,
+        enable_preview: bool = False,
     ) -> None:
         self.simulator = simulator
         self.endpoint = endpoint
@@ -43,6 +51,8 @@ class AsyncObservationPublisher:
         self.jpeg_quality = int(jpeg_quality)
         self.width = int(width)
         self.height = int(height)
+        self.enable_preview = enable_preview
+        self._latest_preview: CameraPreviewFrame | None = None
 
         # 只保留最新快照。渲染落后时宁可丢帧，也不回放过期的机器人状态。
         self._samples: queue.Queue[ObservationSample] = queue.Queue(maxsize=1)
@@ -108,6 +118,11 @@ class AsyncObservationPublisher:
         if self._error is not None:
             raise RuntimeError("MuJoCo observation publisher stopped unexpectedly") from self._error
 
+    def latest_preview(self) -> CameraPreviewFrame | None:
+        """Borrow the latest immutable RGB arrays; no rendering or JPEG decoding."""
+        with self._stats_lock:
+            return self._latest_preview
+
     def _run(self) -> None:
         context = None
         socket = None
@@ -164,6 +179,12 @@ class AsyncObservationPublisher:
                 else:
                     with self._stats_lock:
                         self._sequence += 1
+                        if self.enable_preview:
+                            self._latest_preview = CameraPreviewFrame(
+                                sequence=sequence,
+                                timestamp_s=sample.timestamp_s,
+                                images=tuple(observation[name] for name in CAMERA_NAMES),
+                            )
         except BaseException as exc:
             self._error = exc
             self._ready_event.set()

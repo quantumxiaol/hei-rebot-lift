@@ -16,6 +16,9 @@ START_AREA_HALF_SIZE_M = 0.35
 LINE_HALF_WIDTH_M = 0.015
 LINE_HALF_HEIGHT_M = 0.003
 CAMERA_RESOLUTION = (640, 480)
+# Assisted grasping requires the object centre to reach the gripper TCP.
+# This is an IK tolerance, not a radius derived from the object's size.
+GRASP_CENTER_TOLERANCE_M = 0.015
 
 # 桌面放在机器人正前方，尺寸兼顾双臂可达范围和底盘调试空间。
 TABLE_CENTER_X_M = 0.92
@@ -63,7 +66,7 @@ GRASPABLE_OBJECTS = (
         initial_pos=(0.70, -0.28, TABLE_TOP_Z_M + 0.04),
         initial_quat=(1.0, 0.0, 0.0, 0.0),
         support_height_m=0.04,
-        grasp_radius_m=0.11,
+        grasp_radius_m=GRASP_CENTER_TOLERANCE_M,
     ),
     GraspableObjectSpec(
         body_name="hei_object_cube_green",
@@ -71,7 +74,7 @@ GRASPABLE_OBJECTS = (
         initial_pos=(0.70, 0.0, TABLE_TOP_Z_M + 0.04),
         initial_quat=(1.0, 0.0, 0.0, 0.0),
         support_height_m=0.04,
-        grasp_radius_m=0.11,
+        grasp_radius_m=GRASP_CENTER_TOLERANCE_M,
     ),
     GraspableObjectSpec(
         body_name="hei_object_cube_blue",
@@ -79,7 +82,7 @@ GRASPABLE_OBJECTS = (
         initial_pos=(0.70, 0.28, TABLE_TOP_Z_M + 0.04),
         initial_quat=(1.0, 0.0, 0.0, 0.0),
         support_height_m=0.04,
-        grasp_radius_m=0.11,
+        grasp_radius_m=GRASP_CENTER_TOLERANCE_M,
     ),
     GraspableObjectSpec(
         body_name="hei_object_banana",
@@ -87,7 +90,7 @@ GRASPABLE_OBJECTS = (
         initial_pos=(1.03, 0.0, TABLE_TOP_Z_M + 0.020),
         initial_quat=(0.9848, 0.0, 0.0, 0.1736),
         support_height_m=0.020,
-        grasp_radius_m=0.14,
+        grasp_radius_m=GRASP_CENTER_TOLERANCE_M,
     ),
 )
 
@@ -120,7 +123,7 @@ def scene_objects(settings: SceneSettings | None = None) -> tuple[GraspableObjec
             initial_pos=(*settings.yellow_block_xy, half_size),
             initial_quat=(1.0, 0.0, 0.0, 0.0),
             support_height_m=half_size,
-            grasp_radius_m=half_size + 0.07,
+            grasp_radius_m=GRASP_CENTER_TOLERANCE_M,
         ),
     )
 

@@ -1302,7 +1302,7 @@ class HEIRobotVRSimulator:
             right_tcp_id = self._mujoco_body_id(TCP_FRAMES["right"])
             runtime = next(iter(self.graspable_objects.values()))
             self.model.body_pos[runtime.body_id] = self.data.xpos[right_tcp_id] + np.array(
-                [0.02, 0.0, 0.0], dtype=float
+                [runtime.spec.grasp_radius_m / 2, 0.0, 0.0], dtype=float
             )
             mujoco.mj_forward(self.model, self.data)
             # 默认闭合夹爪先张开再闭合，验证真正的闭合边沿会触发稳定抓取。

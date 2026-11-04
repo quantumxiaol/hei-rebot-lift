@@ -11,7 +11,7 @@ from pathlib import Path
 import mujoco.viewer
 import numpy as np
 import zmq
-
+from hei_robot_mujoco_camera_preview import CameraPreview
 from hei_robot_mujoco_dataset_adapter import (
     HEIGHT_MAX_MM,
     HEIGHT_MIN_MM,
@@ -32,9 +32,9 @@ from hei_robot_vr_mujoco_sim import (
     ARM_JOINTS,
     DEFAULT_URDF,
     DEFAULT_VR_ENDPOINT,
-    HEIRobotVRSimulator,
     LIFT_DEADZONE,
     VR_STALE_TIMEOUT_S,
+    HEIRobotVRSimulator,
 )
 
 
@@ -56,6 +56,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vr-timeout-s", type=float, default=VR_STALE_TIMEOUT_S)
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
+    parser.add_argument(
+        "--camera-preview",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Show front/left-wrist/right-wrist images on the right of the viewer (MuJoCo 3.5+).",
+    )
     parser.add_argument("--plain-scene", action="store_true")
     parser.add_argument(
         "--scene",
@@ -140,6 +146,7 @@ class HEIMujocoZmqServer(HEIRobotVRSimulator):
                 jpeg_quality=args.jpeg_quality,
                 width=args.width,
                 height=args.height,
+                enable_preview=args.camera_preview,
             )
             self.publisher.start()
         except Exception:
@@ -252,11 +259,18 @@ class HEIMujocoZmqServer(HEIRobotVRSimulator):
             self.model,
             self.data,
             key_callback=self._keyboard_callback,
+            show_left_ui=not self.server_args.camera_preview,
+            show_right_ui=not self.server_args.camera_preview,
         )
-        self.viewer.cam.lookat[:] = (0.0, 0.0, 0.75)
-        self.viewer.cam.distance = 2.8
-        self.viewer.cam.azimuth = 135
-        self.viewer.cam.elevation = -20
+        preview = CameraPreview() if self.server_args.camera_preview else None
+        if preview is not None and not hasattr(self.viewer, "set_images"):
+            self.close()
+            raise RuntimeError("Camera preview requires MuJoCo 3.5+; use the root uv environment")
+        with self.viewer.lock():
+            self.viewer.cam.lookat[:] = (0.0, 0.0, 0.75)
+            self.viewer.cam.distance = 2.8
+            self.viewer.cam.azimuth = 135
+            self.viewer.cam.elevation = -20
 
         previous_s = time.monotonic()
         next_publish_s = previous_s
@@ -304,6 +318,8 @@ class HEIMujocoZmqServer(HEIRobotVRSimulator):
                     next_publish_s = max(next_publish_s + publish_period_s, now_s + publish_period_s)
 
                 self.viewer.sync()
+                if preview is not None:
+                    preview.update(self.viewer, self.publisher.latest_preview())
                 if self.control_source == "vr":
                     self._print_status(fresh, packet_count)
                 elif now_s - self.last_network_status_s >= 1.0:

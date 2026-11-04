@@ -57,6 +57,29 @@ def move(adapter: HEIMujocoDatasetAdapter, ik: Kinematics, side: str, xyz: list[
 
 
 class PickupTest(unittest.TestCase):
+    def test_closing_above_cube_does_not_attach_or_lift_it(self) -> None:
+        sim = make_simulation()
+        adapter = HEIMujocoDatasetAdapter(sim, create_renderer=False)
+        try:
+            ik = Kinematics()
+            initial = adapter.capture_snapshot().simulation["objects"]["cube_red"]["position"]
+            for clearance in (0.10, 0.03):
+                with self.subTest(clearance=clearance):
+                    reach(adapter, {"right_gripper.pos": -4.5})
+                    move(adapter, ik, "right", [initial[0], initial[1], initial[2] + clearance])
+                    reach(adapter, {"right_gripper.pos": 0.0})
+                    self.assertIsNone(
+                        adapter.capture_snapshot().simulation["objects"]["cube_red"]["held_by"]
+                    )
+                    move(adapter, ik, "right", [initial[0], initial[1], initial[2] + 0.20])
+                    np.testing.assert_allclose(
+                        adapter.capture_snapshot().simulation["objects"]["cube_red"]["position"],
+                        initial,
+                    )
+        finally:
+            adapter.close()
+            sim.close()
+
     def test_pickup_with_real_ik_and_gripper_edges(self) -> None:
         for object_name, side in (("cube_blue", "left"), ("cube_red", "right"), ("cube_green", "left")):
             with self.subTest(object=object_name, arm=side):
@@ -78,6 +101,9 @@ class PickupTest(unittest.TestCase):
             captured = adapter.capture_snapshot().simulation
             self.assertEqual(captured["objects"][object_name]["held_by"], side)
             tcp = captured["tcp"][side]
+            self.assertLessEqual(
+                np.linalg.norm(np.asarray(captured["objects"][object_name]["position"]) - tcp), 0.015
+            )
             move(adapter, ik, side, [tcp[0], tcp[1], tcp[2] + 0.15])
             lifted = adapter.capture_snapshot().simulation["objects"][object_name]
             self.assertGreaterEqual(lifted["position"][2] - lifted["initial_position"][2], 0.10)
@@ -107,9 +133,26 @@ class TaskGoalTest(unittest.TestCase):
             name: {"position": [0.7, y, 0.82], "initial_position": [0.7, y, 0.82], "held_by": None}
             for name, y in (("cube_blue", 0.28), ("cube_red", -0.28))
         }
-        scene = {"session_id": "test", "reset_count": 0, "objects": self.objects}
+        self.tcp = {"right": [0.7, -0.28, 0.98], "left": [0.7, 0.28, 1.02]}
+        scene = {"session_id": "test", "reset_count": 0, "objects": self.objects, "tcp": self.tcp}
         frame = Frame({"simulation": scene}, (), 0.0)
-        self.controller = Controller(SimpleNamespace(frame=lambda: frame, hold=lambda: None))
+        self.commands = []
+        self.controller = Controller(
+            SimpleNamespace(frame=lambda: frame, hold=lambda: None, set_target=self.commands.append)
+        )
+
+    def test_close_from_above_is_rejected_before_sending_a_command(self) -> None:
+        self.controller.execute("select_target", {"object_name": "cube_red", "minimum_lift_m": 0.1})
+        self.tcp["right"] = [0.7, -0.28, 0.92]
+        with self.assertRaisesRegex(ValueError, "clearance_m=0"):
+            self.controller.execute("set_gripper", {"arm": "right", "opening": "closed"})
+        self.assertEqual(self.commands, [])
+
+    def test_done_rejects_a_distant_attached_object_from_an_old_simulator(self) -> None:
+        self.controller.execute("select_target", {"object_name": "cube_red", "minimum_lift_m": 0.1})
+        self.objects["cube_red"].update(held_by="right", position=[0.7, -0.28, 0.98], grasp_radius_m=0.11)
+        self.tcp["right"] = [0.7, -0.28, 1.08]
+        self.assertFalse(self.controller.execute("done", {})["success"])
 
     def test_goal_is_required_and_cannot_be_replaced_or_weakened(self) -> None:
         with self.assertRaises(ValueError):

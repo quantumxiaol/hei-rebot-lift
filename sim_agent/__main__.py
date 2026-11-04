@@ -9,9 +9,9 @@ import os
 import time
 from pathlib import Path
 
-import httpx
 from dotenv import load_dotenv
 
+from .api import DeepSeekAPI
 from .client import SimulationClient
 from .controller import DEMO_PLAN, Controller
 from .paths import ROOT
@@ -48,7 +48,8 @@ TOOLS = [
     ),
     tool(
         "set_gripper",
-        "Open or close one gripper. A grasp needs an open-to-closed transition near the object.",
+        "Open or close one gripper. To grasp, first move the open gripper to the object's centre "
+        "with clearance_m=0; closing from a distance is rejected.",
         {"arm": ARM, "opening": {"type": "string", "enum": ["open", "closed"]}},
     ),
     tool(
@@ -83,7 +84,9 @@ If the task gives no lift height, use a 0.10 m minimum. This goal cannot be chan
 Choose the arm and tool sequence yourself from observations. Positive world Y is the robot's left;
 negative Y is its right. Objects near Y=0 can be approached with either arm.
 The gripper must be open during approach; approaching from above gives table clearance.
-Grasping requires an open-to-closed transition near the object's centre, then feedback confirming held_by.
+Approach above the object first, then use move_to_object with clearance_m=0 before closing.
+Closing requires the TCP within 0.015 m of the object's centre, not merely above it.
+Grasping requires an open-to-closed transition there, then feedback confirming held_by.
 Plan enough lift to meet the selected minimum, allowing for small IK position errors.
 Each tool is blocking and returns measured simulator feedback. Choose one tool per turn.
 If grasp fails, reopen before retrying. Never claim success without done.success=true.
@@ -133,26 +136,23 @@ def strip_old_images(messages: list[dict]) -> None:
 
 
 def run_deepseek(controller: Controller, steps: int, log_path: Path, text_only: bool, task: str) -> bool:
-    key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-    if not key:
-        raise RuntimeError(f"Fill DEEPSEEK_API_KEY in {ROOT / '.env'}, or explicitly use --demo.")
-    base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
-    model = os.environ.get("DEEPSEEK_MODEL", "deepseek-flash")
+    api = DeepSeekAPI()
     images = not text_only and os.environ.get("HEI_AGENT_SEND_IMAGES", "true").lower() in ("1", "true", "yes")
-    timeout = float(os.environ.get("DEEPSEEK_TIMEOUT_SEC", "60"))
     messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": task}]
-    print(f"[Agent] DeepSeek model={model}, images={images}, max_steps={steps}", flush=True)
+    print(f"[Agent] DeepSeek model={api.model}, images={images}, max_steps={steps}", flush=True)
+    print(f"[Agent] API trust_env={api.trust_env}, max_retries={api.max_retries}", flush=True)
     print(f"[Agent] Task: {task}", flush=True)
-    with httpx.Client(timeout=timeout) as api, log_path.open("a", encoding="utf-8") as trace:
+    with log_path.open("a", encoding="utf-8") as trace:
         for index in range(steps):
             strip_old_images(messages)
             messages.append(observation_message(controller, images))
             print(f"[Agent] Asking DeepSeek, turn {index + 1}/{steps}...", flush=True)
-            response = api.post(
-                f"{base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {key}"},
-                json={
-                    "model": model,
+
+            def refresh_observation() -> None:
+                messages[-1] = observation_message(controller, images)
+
+            body = api.complete(
+                {
                     "messages": messages,
                     "tools": TOOLS,
                     "tool_choice": "auto",
@@ -161,11 +161,8 @@ def run_deepseek(controller: Controller, steps: int, log_path: Path, text_only: 
                     "temperature": 0.0,
                     "stream": False,
                 },
+                before_attempt=refresh_observation,
             )
-            if response.is_error:
-                detail = response.text[:1000].replace(key, "[REDACTED]")
-                raise RuntimeError(f"DeepSeek HTTP {response.status_code}: {detail}")
-            body = response.json()
             message = body["choices"][0]["message"]
             calls = message.get("tool_calls") or []
             messages.append(
@@ -236,8 +233,14 @@ def run_deepseek(controller: Controller, steps: int, log_path: Path, text_only: 
 def main() -> None:
     load_dotenv(ROOT / ".env", override=False)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--demo", action="store_true", help="Use the fixed local test plan; do not call DeepSeek."
+    )
+    mode.add_argument(
+        "--check-api",
+        action="store_true",
+        help="Send a minimal API request without connecting to the simulator.",
     )
     parser.add_argument(
         "--text-only", action="store_true", help="Send structured simulator state without images."
@@ -249,15 +252,32 @@ def main() -> None:
         parser.error("--task must not be empty")
     if args.demo and args.task is not None:
         parser.error("--demo uses the fixed blue-cube plan; omit --demo to run a custom --task with DeepSeek")
+    if args.check_api and args.task is not None:
+        parser.error("--check-api only tests the API connection and does not execute --task")
     task = args.task.strip() if args.task is not None else DEFAULT_TASK
     if not 1 <= args.max_steps <= 30:
         parser.error("--max-steps must be between 1 and 30")
     if not args.demo and not os.environ.get("DEEPSEEK_API_KEY", "").strip():
         parser.error("Fill DEEPSEEK_API_KEY in the root .env, or use --demo for a fixed-plan test.")
-    log_dir = ROOT / "outputs/sim-agent"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
     try:
+        if args.check_api:
+            api = DeepSeekAPI()
+            print(
+                f"[API] model={api.model}, trust_env={api.trust_env}, max_retries={api.max_retries}",
+                flush=True,
+            )
+            body = api.complete(
+                {
+                    "messages": [{"role": "user", "content": "Reply with exactly OK."}],
+                    "thinking": {"type": "disabled"},
+                    "max_tokens": 16,
+                }
+            )
+            print(f"[API] HTTP 200: {body['choices'][0]['message'].get('content')}", flush=True)
+            return
+        log_dir = ROOT / "outputs/sim-agent"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
         with SimulationClient() as client:
             controller = Controller(client)
             if args.demo:
